@@ -96,6 +96,7 @@ struct PanelView: View {
     @Environment(Store.self) private var store
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var listHeight: CGFloat = 0
+    @State private var panelHeight: CGFloat = 0
     var maxListHeight: CGFloat = 560
 
     var body: some View {
@@ -142,6 +143,11 @@ struct PanelView: View {
         }
         .padding(14)
         .frame(width: 400)
+        .fixedSize(horizontal: false, vertical: true)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { panelHeight = $0 }
+        // The menu window doesn't follow content that shrinks (folding a section left an
+        // empty band), so size it ourselves.
+        .background(WindowFitter(height: panelHeight))
     }
 
     private func modelList(_ stats: [ModelStats]) -> some View {
@@ -151,7 +157,8 @@ struct PanelView: View {
                 if !rows.isEmpty {
                     let folded = store.collapsed.contains(source)
                     SectionHeader(source: source, rows: rows, folded: folded) {
-                        withAnimation(.snappy(duration: 0.2)) { store.toggleCollapsed(source) }
+                        // No animation: the menu window resizes in one step and can't track it.
+                        store.toggleCollapsed(source)
                     }
                     if !folded { ForEach(rows) { ModelRow(stats: $0) } }
                 }
@@ -163,6 +170,26 @@ struct PanelView: View {
         var s = store.pinned == nil ? "Bar follows latest model" : "Bar pinned · click row to unpin"
         if store.scanning { s += " · scanning…" }
         return s
+    }
+}
+
+/// Resizes the hosting window so its content area is exactly `height` tall, keeping the
+/// top edge fixed (the menu bar panel hangs from the top).
+struct WindowFitter: NSViewRepresentable {
+    let height: CGFloat
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        let height = height
+        DispatchQueue.main.async {
+            guard height > 0, let window = view.window else { return }
+            let frame = window.frame
+            let delta = height - window.contentRect(forFrameRect: frame).height
+            guard abs(delta) > 0.5 else { return }
+            window.setFrame(NSRect(x: frame.minX, y: frame.minY - delta,
+                                   width: frame.width, height: frame.height + delta), display: true)
+        }
     }
 }
 
