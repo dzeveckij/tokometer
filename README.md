@@ -85,7 +85,7 @@ To publish a release (builds locally, tags, pushes, and uploads the zip with `gh
 
 State lives in `~/Library/Application Support/Tokometer/`: `cache.json` (scan state, safe to delete) and `history.json` (daily summaries; deleting it resets 7 D / 30 D and the usual-speed baseline).
 
-The icon is drawn by `swift scripts/make-icon.swift`, which writes `Resources/AppIcon.icns` and `docs/icon.png`.
+The icon's source is `Resources/icon.svg`; `swift scripts/make-icon.swift` renders it to `Resources/AppIcon.icns` and `docs/icon.png`.
 
 Source layout:
 
