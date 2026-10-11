@@ -1,0 +1,35 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build app
+        env:
+          REF: ${{ github.ref_type == 'tag' && github.ref_name || 'v0.0.0-dev' }}
+        run: VERSION="${REF#v}" ./build.sh
+
+      - name: Zip
+        run: cd build && ditto -c -k --keepParent Tokometer.app Tokometer.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tokometer
+          path: build/Tokometer.zip
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" build/Tokometer.zip --generate-notes
