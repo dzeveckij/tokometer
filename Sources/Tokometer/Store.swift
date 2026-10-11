@@ -152,7 +152,7 @@ final class Store {
                     points: perDay.map { Store.median($0.values.map(Double.init)) },
                     usual: usual[key])
             }
-            .sorted { $0.lastSeen > $1.lastSeen }
+            .sorted { $0.lastSeen != $1.lastSeen ? $0.lastSeen > $1.lastSeen : $0.count > $1.count }
         }
 
         let cutoff = Date().timeIntervalSince1970 - (window.seconds ?? 86400)

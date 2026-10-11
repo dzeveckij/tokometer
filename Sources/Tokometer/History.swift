@@ -30,8 +30,8 @@ struct DayStat: Codable {
 struct History: Codable {
     static let keepDays = 30
     /// Bump when model keys change meaning (v2: split by tier and served model, v3: backfill,
-    /// v4: count requested models).
-    static let currentVersion = 4
+    /// v4: count requested models, v5: OpenCode).
+    static let currentVersion = 5
     var version = currentVersion
     /// Live scanning has counted every response that ended after this.
     var coveredFrom: Double = 0

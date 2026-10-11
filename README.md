@@ -2,7 +2,7 @@
 
 # Tokometer
 
-A tiny macOS menu bar app that shows how fast your coding agents are generating, in **tokens per second**, per model, for **Claude Code**, **Codex** and **Antigravity**.
+A tiny macOS menu bar app that shows how fast your coding agents are generating, in **tokens per second**, per model, for **Claude Code**, **Codex**, **Antigravity** and **OpenCode**.
 
 <p align="center">
   <picture>
@@ -57,11 +57,13 @@ Speed is **output tokens ÷ wall-clock time** of a single model response, measur
 | Claude Code | `~/.claude/projects/**/*.jsonl` | `message.usage.output_tokens` | parent prompt/tool result → last content block of the message |
 | Codex | `~/.codex/sessions/`, `~/.codex/archived_sessions/` | `token_usage_record.usage.output_tokens` | last input (task start, tool output, user message) → usage record |
 | Antigravity | `~/.gemini/antigravity{,-cli,-ide}/conversations/*.db` | step metadata usage | step created → step completed |
+| OpenCode | `~/.local/share/opencode/opencode.db` (or `$XDG_DATA_HOME/opencode`; older versions' `storage/message/*.json` too) | assistant message `tokens.output` + `tokens.reasoning` | message created → stream finished (tool execution excluded) |
 
 Models are labeled by what actually ran:
 
 - **Codex:** fast mode (`service_tier = "priority"`) is shown separately as "· Fast". Sub-agent sessions inherit their parent session's tier; sessions that never log one use `service_tier` from `~/.codex/config.toml`.
 - **Claude Code:** `usage.speed` marks fast mode the same way; the model is the one the API reports for each response.
+- **OpenCode:** models from OpenCode's own provider are shown by name; other providers keep a prefix (e.g. `openrouter/claude-sonnet-4-5`), since the same model can run at very different speeds through different providers. A non-default variant is shown like a tier (e.g. "· High").
 - **Antigravity:** the model you pick is often served by a different backend (e.g. `gemini-3.8-flash-high` by `gemini-3.8-flash-exp-a` or `gemini-3.8-flash-n`, which differ noticeably in speed). Rows show the backend that answered, with "requested …" underneath.
 
 To keep numbers honest:
@@ -80,7 +82,9 @@ Log formats are undocumented and change between tool versions. If a tool stops s
 ```bash
 swift build                                  # debug build
 .build/debug/Tokometer --dump                # scan from scratch and print per-model stats
+.build/debug/Tokometer --dump --days 30      # same, over the last 30 days
 .build/debug/Tokometer --snapshot out.png    # render the panel to a PNG (--dark, --collapse antigravity)
+swift test                                   # parser tests
 ```
 
 To publish a release (builds locally, tags, pushes, and uploads the zip with `gh`):
@@ -97,6 +101,7 @@ Source layout:
 
 - `Scanner.swift`: incremental JSONL reader plus the Claude Code and Codex parsers
 - `Antigravity.swift`: SQLite + minimal protobuf reader for Antigravity
+- `OpenCode.swift`: OpenCode SQLite (current and older layouts) and JSON-file reader
 - `History.swift`: daily per-model summaries for 7 D / 30 D and the usual-speed baseline
 - `Store.swift`: samples, stats, settings
 - `App.swift`: menu bar UI

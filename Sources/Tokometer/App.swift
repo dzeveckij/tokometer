@@ -50,9 +50,11 @@ enum Main {
         try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
     }
 
-    /// `--dump`: fresh scan without cache, printing per-model stats (for debugging the parsers).
+    /// `--dump [--days N]`: fresh scan without cache, printing per-model stats (for debugging the parsers).
     static func dump() {
-        let scanner = Scanner()
+        let args = CommandLine.arguments
+        let days = args.firstIndex(of: "--days").flatMap { $0 + 1 < args.count ? Double(args[$0 + 1]) : nil } ?? 1
+        let scanner = Scanner(lookback: days * 86400)
         let t0 = Date()
         let samples = scanner.scan()
         print(String(format: "scanned in %.1fs, %d samples", Date().timeIntervalSince(t0), samples.count))

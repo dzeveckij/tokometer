@@ -10,6 +10,13 @@ let package = Package(
             path: "Sources/Tokometer",
             swiftSettings: [.swiftLanguageMode(.v5)],
             linkerSettings: [.linkedLibrary("sqlite3")]
-        )
+        ),
+        .testTarget(
+            name: "TokometerTests",
+            dependencies: ["Tokometer"],
+            path: "Tests/TokometerTests",
+            swiftSettings: [.swiftLanguageMode(.v5)],
+            linkerSettings: [.linkedLibrary("sqlite3")]
+        ),
     ]
 )

@@ -23,6 +23,9 @@ struct FileState: Codable {
     var agyLastIdx: Int?
     /// Model names logged in this conversation: enum -> name -> count.
     var agyNames: [Int: [String: Int]]?
+
+    // OpenCode (SQLite): newest message time_updated already read, in ms.
+    var openCodeUpdated: Int64?
 }
 
 struct ClaudePending: Codable {
@@ -57,6 +60,8 @@ final class Scanner: @unchecked Sendable {
     private var freshScan = true
     /// Individual responses kept; log files untouched for longer are skipped entirely.
     let lookback: TimeInterval
+    /// OpenCode data directory; defaults to $XDG_DATA_HOME/opencode or ~/.local/share/opencode.
+    var openCodeDir: URL?
 
     init(lookback: TimeInterval = 86400) {
         self.lookback = lookback
@@ -152,7 +157,7 @@ final class Scanner: @unchecked Sendable {
                     switch source {
                     case .codex: handleCodex(line, &st, &out)
                     case .claude: handleClaude(line, &st, &out)
-                    case .antigravity: break
+                    case .antigravity, .opencode: break
                     }
                 }
                 flushIdleClaude(&st, &out)
@@ -165,6 +170,7 @@ final class Scanner: @unchecked Sendable {
             out[i].tier = Scanner.normalizeTier(cache.threadTiers[parent] ?? codexDefaultTier)
         }
         scanAntigravity(cutoff: cutoff, &out)
+        scanOpenCode(cutoff: cutoff, &out)
         cache.samples.append(contentsOf: out)
         for s in out where !freshScan || s.end > history.updatedAt { history.add(s) }
         history.updatedAt = Date().timeIntervalSince1970
