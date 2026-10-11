@@ -1,6 +1,6 @@
 cask "tokometer" do
-  version "0.0.0"
-  sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+  version "0.3.0"
+  sha256 "36ad50163b33407942e24b6047b6498ff5986719c6014cfe3ec98ed9a843a7f0"
 
   url "https://github.com/dzeveckij/tokometer/releases/download/v#{version}/Tokometer-#{version}.zip"
   name "Tokometer"
