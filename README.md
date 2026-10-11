@@ -15,6 +15,7 @@ No API keys, no proxies, no network access. Tokometer only reads the session log
 
 - Live tokens/sec of the most recently active model right in the menu bar (or pin any model)
 - Per-model median, p90, response count, token volume and a sparkline
+- Collapsible providers: click a provider header to fold its models into a one-line summary
 - 15 min / 1 h / 24 h windows
 - Fast incremental scanning: only newly appended log data is read
 - Optional launch at login
@@ -63,7 +64,7 @@ Log formats are undocumented and change between tool versions. If a tool stops s
 ```bash
 swift build                                  # debug build
 .build/debug/Tokometer --dump                # scan from scratch and print per-model stats
-.build/debug/Tokometer --snapshot out.png    # render the panel to a PNG (add --dark for dark mode)
+.build/debug/Tokometer --snapshot out.png    # render the panel to a PNG (--dark, --collapse antigravity)
 ```
 
 To publish a release (builds locally, tags, pushes, and uploads the zip with `gh`):

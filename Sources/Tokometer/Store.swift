@@ -43,6 +43,15 @@ final class Store {
     var showModelInBar: Bool = UserDefaults.standard.object(forKey: "showModelInBar") as? Bool ?? true {
         didSet { UserDefaults.standard.set(showModelInBar, forKey: "showModelInBar") }
     }
+    /// Providers whose model list is folded away in the panel.
+    var collapsed: Set<Source> = Set((UserDefaults.standard.stringArray(forKey: "collapsed") ?? []).compactMap(Source.init)) {
+        didSet { if persistCollapsed { UserDefaults.standard.set(collapsed.map(\.rawValue), forKey: "collapsed") } }
+    }
+    @ObservationIgnored private var persistCollapsed = true
+
+    func toggleCollapsed(_ source: Source) {
+        if collapsed.contains(source) { collapsed.remove(source) } else { collapsed.insert(source) }
+    }
 
     @ObservationIgnored nonisolated private let scanner = Scanner()
     @ObservationIgnored nonisolated private let queue = DispatchQueue(label: "tokometer.scan", qos: .utility)
@@ -61,9 +70,11 @@ final class Store {
         }
     }
 
-    func loadCachedForSnapshot() {
+    func loadCachedForSnapshot(collapsed: Set<Source>) {
         scanner.load()
         samples = scanner.cache.samples
+        persistCollapsed = false
+        self.collapsed = collapsed
     }
 
     func refresh() {

@@ -6,18 +6,22 @@ import ServiceManagement
 enum Main {
     static func main() {
         if CommandLine.arguments.contains("--dump") { dump(); return }
-        if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
-            let dark = CommandLine.arguments.contains("--dark")
-            MainActor.assumeIsolated { snapshot(to: CommandLine.arguments[i + 1], dark: dark) }
+        let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
+            let dark = args.contains("--dark")
+            let collapsed = args.firstIndex(of: "--collapse").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+                .map { Set($0.split(separator: ",").compactMap { Source(rawValue: String($0)) }) } ?? []
+            MainActor.assumeIsolated { snapshot(to: args[i + 1], dark: dark, collapsed: collapsed) }
             return
         }
         TokometerApp.main()
     }
 
-    /// `--snapshot <path> [--dark]`: renders the panel to a PNG from cached data (README screenshots).
-    @MainActor static func snapshot(to path: String, dark: Bool) {
+    /// `--snapshot <path> [--dark] [--collapse codex,antigravity]`: renders the panel to a PNG
+    /// from cached data (README screenshots). Doesn't touch the app's saved settings.
+    @MainActor static func snapshot(to path: String, dark: Bool, collapsed: Set<Source>) {
         let store = Store()
-        store.loadCachedForSnapshot()
+        store.loadCachedForSnapshot(collapsed: collapsed)
         // The live panel sits on the menu's material; give the image an opaque card instead,
         // and show the whole list rather than a scroll view cut mid-row.
         let card = PanelView(maxListHeight: .infinity)
@@ -145,10 +149,11 @@ struct PanelView: View {
             ForEach(Source.allCases, id: \.self) { source in
                 let rows = stats.filter { $0.source == source }
                 if !rows.isEmpty {
-                    Text(source.label.uppercased())
-                        .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                        .padding(.top, 2)
-                    ForEach(rows) { ModelRow(stats: $0) }
+                    let folded = store.collapsed.contains(source)
+                    SectionHeader(source: source, rows: rows, folded: folded) {
+                        withAnimation(.snappy(duration: 0.2)) { store.toggleCollapsed(source) }
+                    }
+                    if !folded { ForEach(rows) { ModelRow(stats: $0) } }
                 }
             }
         }
@@ -158,6 +163,36 @@ struct PanelView: View {
         var s = store.pinned == nil ? "Bar follows latest model" : "Bar pinned · click row to unpin"
         if store.scanning { s += " · scanning…" }
         return s
+    }
+}
+
+/// Provider header; click to fold or unfold its models. Folded, it summarizes them in one line.
+struct SectionHeader: View {
+    let source: Source
+    let rows: [ModelStats]
+    let folded: Bool
+    let toggle: () -> Void
+
+    var body: some View {
+        Button(action: toggle) {
+            HStack(spacing: 5) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .rotationEffect(.degrees(folded ? 0 : 90))
+                    .frame(width: 8)
+                Text(source.label.uppercased())
+                Spacer()
+                if folded, let top = rows.max(by: { $0.recent < $1.recent }) {
+                    Text("\(rows.count) model\(rows.count == 1 ? "" : "s") · \(top.name) \(Int(top.recent.rounded())) t/s")
+                        .monospacedDigit().lineLimit(1)
+                }
+            }
+            .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+            .padding(.top, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(folded ? "Show \(source.label) models" : "Hide \(source.label) models")
     }
 }
 
