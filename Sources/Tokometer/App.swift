@@ -172,7 +172,8 @@ struct PanelView: View {
 
     private var footer: String {
         var s = store.pinned == nil ? "Bar follows latest model" : "Bar pinned · click row to unpin"
-        if store.scanning { s += " · scanning…" }
+        if store.importingHistory { s += " · importing 30 days of history…" }
+        else if store.scanning { s += " · scanning…" }
         return s
     }
 }
@@ -241,7 +242,8 @@ struct ModelRow: View {
                 }
                 Text("med \(fmt(stats.median)) · p90 \(fmt(stats.p90)) · n=\(stats.count)")
                     .font(.caption2).foregroundStyle(.secondary).monospacedDigit().lineLimit(1)
-                Text("\(compact(stats.tokens)) tokens · \(ago(stats.lastSeen))").font(.caption2).foregroundStyle(.tertiary)
+                Text((stats.requested.map { "requested \($0) · " } ?? "") + "\(compact(stats.tokens)) tokens · \(ago(stats.lastSeen))")
+                    .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
             }
             Spacer(minLength: 4)
             Sparkline(points: stats.points).frame(width: 80, height: 28)

@@ -58,11 +58,17 @@ Speed is **output tokens ÷ wall-clock time** of a single model response, measur
 | Codex | `~/.codex/sessions/`, `~/.codex/archived_sessions/` | `token_usage_record.usage.output_tokens` | last input (task start, tool output, user message) → usage record |
 | Antigravity | `~/.gemini/antigravity{,-cli,-ide}/conversations/*.db` | step metadata usage | step created → step completed |
 
+Models are labeled by what actually ran:
+
+- **Codex:** fast mode (`service_tier = "priority"`) is shown separately as "· Fast". Sub-agent sessions inherit their parent session's tier; sessions that never log one use `service_tier` from `~/.codex/config.toml`.
+- **Claude Code:** `usage.speed` marks fast mode the same way; the model is the one the API reports for each response.
+- **Antigravity:** the model you pick is often served by a different backend (e.g. `gemini-3.8-flash-high` by `gemini-3.8-flash-exp-a` or `gemini-3.8-flash-n`, which differ noticeably in speed). Rows show the backend that answered, with "requested …" underneath.
+
 To keep numbers honest:
 
 - Responses under **200 output tokens** are ignored, because for short replies the wait for the first token dominates and the rate reflects latency rather than speed.
 - Responses duplicated by resumed or forked sessions are counted once.
-- Only the last 24 hours of individual responses are kept, and older log files are never opened. History beyond that is built up from daily summaries (a sample of speeds plus response and token counts, per model per day) starting from when you install Tokometer, so 7 D and 30 D fill in over time.
+- Only the last 24 hours of individual responses are kept, and older log files are never opened. 7 D and 30 D come from daily summaries (a sample of speeds plus response and token counts, per model per day) kept for 30 days. On first launch Tokometer reads the previous 30 days of logs once, in the background, to fill them in; after that only new log data is read.
 - The menu bar falls back to an icon after 30 minutes without activity, so it never shows a stale speed.
 
 The big number on each row is the median of that model's last 5 responses.

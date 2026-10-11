@@ -16,17 +16,35 @@ enum Source: String, Codable, CaseIterable {
 /// request start (prompt / tool result) to the last byte of the response.
 struct Sample: Codable {
     var source: Source
+    /// The model that actually produced the response, when the logs say so.
     var model: String
     var end: Double       // unix seconds
     var duration: Double  // seconds
     var tokens: Int
+    /// "fast" for Codex priority / Claude fast mode; nil for the standard tier.
+    var tier: String? = nil
+    /// The model that was asked for, when a different one answered (Antigravity reroutes).
+    var requested: String? = nil
 
     var tps: Double { Double(tokens) / duration }
-    var key: String { ModelKey.make(source, model) }
+    var key: String { ModelKey.make(source, model, tier) }
 }
 
 enum ModelKey {
-    static func make(_ source: Source, _ model: String) -> String { "\(source.rawValue)|\(model)" }
+    static func make(_ source: Source, _ model: String, _ tier: String? = nil) -> String {
+        "\(source.rawValue)|\(model)" + (tier.map { "|\($0)" } ?? "")
+    }
+
+    static func split(_ key: String) -> (source: Source, model: String, tier: String?)? {
+        let parts = key.split(separator: "|", maxSplits: 2).map(String.init)
+        guard parts.count >= 2, let source = Source(rawValue: parts[0]) else { return nil }
+        return (source, parts[1], parts.count > 2 ? parts[2] : nil)
+    }
+}
+
+/// Row title: pretty model name plus the tier, e.g. "gpt-6-astra · Fast".
+func displayName(_ model: String, tier: String?) -> String {
+    displayName(model) + (tier.map { " · \($0.capitalized)" } ?? "")
 }
 
 /// Pretty names: "claude-opus-5-5" -> "Opus 5.5", "claude-sonnet-4-5-20250929" -> "Sonnet 4.5".

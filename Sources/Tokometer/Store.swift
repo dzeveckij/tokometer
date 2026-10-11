@@ -27,6 +27,9 @@ struct ModelStats: Identifiable {
     let key: String
     let source: Source
     let model: String
+    let tier: String?
+    /// The model that was asked for, when a different one answered.
+    let requested: String?
     let recent: Double        // median of the last 5 responses
     let median: Double        // median over the window
     let p90: Double
@@ -37,7 +40,7 @@ struct ModelStats: Identifiable {
     /// Typical speed: median over the last 7 days of history.
     let usual: Double?
     var id: String { key }
-    var name: String { displayName(model) }
+    var name: String { displayName(model, tier: tier) }
 
     /// Recent speed relative to usual, e.g. -0.18 = 18% slower. nil without enough history.
     var change: Double? { usual.map { recent / $0 - 1 } }
@@ -48,6 +51,7 @@ final class Store {
     private(set) var samples: [Sample] = []
     private(set) var history = History()
     private(set) var scanning = false
+    private(set) var importingHistory = false
 
     var window: StatsWindow = StatsWindow(rawValue: UserDefaults.standard.string(forKey: "window") ?? "") ?? .day {
         didSet { UserDefaults.standard.set(window.rawValue, forKey: "window") }
@@ -80,6 +84,7 @@ final class Store {
             let initial = scanner.cache.samples, history = scanner.history
             DispatchQueue.main.async { self.samples = initial; self.history = history }
             self.runScan()
+            self.backfillIfNeeded()
         }
         timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refresh() }
@@ -98,6 +103,15 @@ final class Store {
         guard !scanning else { return }
         scanning = true
         queue.async { self.runScan() }
+    }
+
+    /// Runs on the scan queue, so it never overlaps a scan.
+    nonisolated private func backfillIfNeeded() {
+        guard scanner.needsBackfill else { return }
+        DispatchQueue.main.async { self.importingHistory = true }
+        scanner.backfill()
+        let history = scanner.history
+        DispatchQueue.main.async { self.history = history; self.importingHistory = false }
     }
 
     nonisolated private func runScan() {
@@ -125,11 +139,12 @@ final class Store {
             return keys.compactMap { key -> ModelStats? in
                 let perDay = dayKeys.compactMap { history.days[$0]?[key] }
                 let tps = perDay.flatMap(\.values).map(Double.init).sorted()
-                guard !tps.isEmpty, let (source, model) = Store.split(key) else { return nil }
+                guard !tps.isEmpty, let parts = ModelKey.split(key) else { return nil }
                 let recent = byKey[key].map { Store.median($0.suffix(5).map(\.tps)) }
                     ?? Store.median(perDay.last?.values.map(Double.init) ?? [])
                 return ModelStats(
-                    key: key, source: source, model: model,
+                    key: key, source: parts.source, model: parts.model, tier: parts.tier,
+                    requested: Store.mostCommon(perDay.compactMap(\.requested).reduce(into: [:]) { $0.merge($1, uniquingKeysWith: +) }),
                     recent: recent, median: Store.median(tps), p90: Store.p90(tps),
                     count: perDay.reduce(0) { $0 + $1.count },
                     tokens: perDay.reduce(0) { $0 + $1.tokens },
@@ -146,7 +161,8 @@ final class Store {
             guard let first = sorted.first else { return nil }
             let tps = sorted.map(\.tps).sorted()
             return ModelStats(
-                key: key, source: first.source, model: first.model,
+                key: key, source: first.source, model: first.model, tier: first.tier,
+                requested: Store.mostCommon(sorted.compactMap(\.requested).reduce(into: [:]) { $0[$1, default: 0] += 1 }),
                 recent: Store.median(sorted.suffix(5).map(\.tps)),
                 median: Store.median(tps), p90: Store.p90(tps),
                 count: sorted.count,
@@ -173,10 +189,6 @@ final class Store {
         return Date().timeIntervalSince1970 - Double(dayKeys.count - 1 - i) * 86400
     }
 
-    private static func split(_ key: String) -> (Source, String)? {
-        guard let bar = key.firstIndex(of: "|"), let source = Source(rawValue: String(key[..<bar])) else { return nil }
-        return (source, String(key[key.index(after: bar)...]))
-    }
 
     /// The model shown in the menu bar: pinned one, else whichever responded last.
     /// nil once nothing has run for a while, so the bar doesn't show a stale speed.
@@ -186,7 +198,11 @@ final class Store {
         let list = samples.filter { $0.key == key }.sorted { $0.end < $1.end }.suffix(5)
         guard let last = list.last, Date().timeIntervalSince1970 - last.end < 30 * 60 else { return nil }
         let tps = Store.median(list.map(\.tps))
-        return (displayName(last.model), tps, usualSpeeds()[key].map { tps / $0 - 1 })
+        return (displayName(last.model, tier: last.tier), tps, usualSpeeds()[key].map { tps / $0 - 1 })
+    }
+
+    static func mostCommon(_ counts: [String: Int]) -> String? {
+        counts.max { $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key }?.key
     }
 
     nonisolated static func p90(_ sorted: [Double]) -> Double {

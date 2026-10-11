@@ -6,12 +6,15 @@ struct DayStat: Codable {
     var values: [Float] = []
     var count = 0
     var tokens = 0
+    /// Models that were asked for, when a different one answered: name -> responses.
+    var requested: [String: Int]?
 
     static let cap = 500
 
     mutating func add(_ s: Sample) {
         count += 1
         tokens += s.tokens
+        if let r = s.requested { requested = (requested ?? [:]).merging([r: 1], uniquingKeysWith: +) }
         if values.count < DayStat.cap {
             values.append(Float(s.tps))
         } else {
@@ -22,10 +25,18 @@ struct DayStat: Codable {
     }
 }
 
-/// Daily per-model summaries, kept for `keepDays`. Built from samples as they are found,
-/// so history grows from first launch instead of re-reading old logs.
+/// Daily per-model summaries, kept for `keepDays`. Live scanning adds new responses; the
+/// time before it started is filled in once by a background backfill of the last 30 days.
 struct History: Codable {
     static let keepDays = 30
+    /// Bump when model keys change meaning (v2: split by tier and served model, v3: backfill,
+    /// v4: count requested models).
+    static let currentVersion = 4
+    var version = currentVersion
+    /// Live scanning has counted every response that ended after this.
+    var coveredFrom: Double = 0
+    /// Whether the time before `coveredFrom` has been filled in from older logs.
+    var backfilled = false
 
     /// "yyyy-MM-dd" -> model key -> stats
     var days: [String: [String: DayStat]] = [:]

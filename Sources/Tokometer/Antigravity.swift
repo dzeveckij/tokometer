@@ -3,8 +3,14 @@ import SQLite3
 
 /// Antigravity (app, CLI, IDE) keeps each conversation in a SQLite DB under ~/.gemini/<variant>/conversations.
 /// Model responses are `steps` rows with step_type 15; their `metadata` protobuf holds:
-///   .1 created timestamp, .7 completed timestamp, .9 usage { .1 model enum, .3 output tokens }.
-/// `gen_metadata` rows map the model enum to a name: .3 { .1 enum, .28 name }.
+///   .1 created timestamp, .7 completed timestamp,
+///   .9 usage { .1 requested model enum, .3 output tokens, .11 response id }.
+/// `gen_metadata` rows, one per generation, hold
+///   .1 { .4 { .11 response id }, .19 backend model that actually ran }
+///   .3 { .1 model enum, .28 requested model name }.
+/// The requested model is often served by a different backend (e.g. "gemini-3.8-flash-high"
+/// by "gemini-3.8-flash" or "gemini-3.8-flash-n", which differ in speed), so samples use the
+/// backend model and keep the requested one alongside.
 extension Scanner {
     func scanAntigravity(cutoff: Date, _ out: inout [Sample]) {
         let fm = FileManager.default
@@ -34,12 +40,22 @@ extension Scanner {
         defer { sqlite3_close(db) }
         sqlite3_busy_timeout(db, 1000)
 
+        var served: [String: String] = [:]   // response id -> backend model
+        var names: [Int: [String: Int]] = [:]
         let namesOK = forEachRow(db, "SELECT data FROM gen_metadata") { stmt in
-            guard let cfg = PB(blob(stmt, 0)).bytes(3).map(PB.init),
-                  let id = cfg.varint(1), let name = cfg.string(28) else { return true }
-            cache.agyModels[Int(id)] = name
+            let gen = PB(blob(stmt, 0))
+            if let run = gen.bytes(1).map(PB.init), let model = run.string(19),
+               let rid = run.bytes(4).map(PB.init)?.string(11) {
+                served[rid] = model
+            }
+            if let cfg = gen.bytes(3).map(PB.init), let id = cfg.varint(1), let name = cfg.string(28) {
+                names[Int(id), default: [:]][name, default: 0] += 1
+            }
             return true
         }
+        st.agyNames = names
+        cache.files[path] = st   // so this conversation's names count below
+        refreshAgyModelNames()
 
         let after = st.agyLastIdx ?? -1
         var lastDone = after
@@ -52,12 +68,29 @@ extension Scanner {
             guard let start = meta.timestamp(1), let usage = meta.bytes(9).map(PB.init),
                   let tokens = usage.varint(3) else { return true }
             let id = Int(usage.varint(1) ?? 0)
-            let model = cache.agyModels[id] ?? "model-\(id)"
-            add(Sample(source: .antigravity, model: model, end: end, duration: end - start, tokens: Int(tokens)), &out)
+            let requested = cache.agyModels[id]   // nil when the logs never name this enum
+            let actual = usage.string(11).flatMap { served[$0] }
+            add(Sample(source: .antigravity, model: actual ?? requested ?? "model-\(id)", end: end,
+                       duration: end - start, tokens: Int(tokens),
+                       requested: actual != nil && actual != requested ? requested : nil), &out)
             return true
         }
         st.agyLastIdx = lastDone
         return ok && namesOK
+    }
+
+    /// The same enum is sometimes logged under an alias ("gemini-3.8-flash-high" / "gemini-4-cp");
+    /// label it by its most common name across all conversations.
+    private func refreshAgyModelNames() {
+        var totals: [Int: [String: Int]] = [:]
+        for st in cache.files.values {
+            for (id, counts) in st.agyNames ?? [:] {
+                for (name, n) in counts { totals[id, default: [:]][name, default: 0] += n }
+            }
+        }
+        for (id, counts) in totals {
+            cache.agyModels[id] = counts.max { $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key }!.key
+        }
     }
 
     /// Returns false on any SQLite error (e.g. busy while Antigravity writes), so the DB is retried.

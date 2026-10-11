@@ -8,6 +8,10 @@ struct FileState: Codable {
     // Codex
     var model: String?
     var lastInput: Double?
+    var threadId: String?
+    var parentThread: String?
+    /// Latest service tier this session logged ("priority" = fast mode).
+    var tier: String?
 
     // Claude Code
     var pending: ClaudePending?
@@ -17,6 +21,8 @@ struct FileState: Codable {
     // Antigravity (SQLite)
     var stamp: Double?
     var agyLastIdx: Int?
+    /// Model names logged in this conversation: enum -> name -> count.
+    var agyNames: [Int: [String: Int]]?
 }
 
 struct ClaudePending: Codable {
@@ -25,17 +31,20 @@ struct ClaudePending: Codable {
     var start: Double
     var last: Double
     var tokens: Int
+    var tier: String?
 }
 
 struct ScanCache: Codable {
     /// Bump when parsing or filtering changes so stale samples get rebuilt.
-    static let currentVersion = 4
+    static let currentVersion = 6
     var version = currentVersion
     var files: [String: FileState] = [:]
     var samples: [Sample] = []
     var agyModels: [Int: String] = [:]   // Antigravity model enum -> name
     /// Response id -> end time. Resumed/forked sessions copy old messages into new files.
     var seen: [String: Double] = [:]
+    /// Codex thread id -> latest service tier, so sub-agent sessions can inherit their parent's.
+    var threadTiers: [String: String] = [:]
 }
 
 /// Only touched from Store's serial scan queue.
@@ -43,10 +52,15 @@ final class Scanner: @unchecked Sendable {
     let home = FileManager.default.homeDirectoryForCurrentUser
     var cache = ScanCache()
     var history = History()
+    private var codexDefaultTier: String?
     /// True until the first scan after starting without a usable cache.
     private var freshScan = true
-    /// History kept and shown; log files untouched for longer are skipped entirely.
-    let lookback: TimeInterval = 86400
+    /// Individual responses kept; log files untouched for longer are skipped entirely.
+    let lookback: TimeInterval
+
+    init(lookback: TimeInterval = 86400) {
+        self.lookback = lookback
+    }
 
     private var supportDir: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -59,7 +73,9 @@ final class Scanner: @unchecked Sendable {
     private var historyURL: URL { supportDir.appendingPathComponent("history.json") }
 
     func load() {
-        let savedHistory = (try? Data(contentsOf: historyURL)).flatMap { try? JSONDecoder().decode(History.self, from: $0) }
+        let savedHistory = (try? Data(contentsOf: historyURL))
+            .flatMap { try? JSONDecoder().decode(History.self, from: $0) }
+            .flatMap { $0.version == History.currentVersion ? $0 : nil }
         if let savedHistory { history = savedHistory }
         guard let data = try? Data(contentsOf: cacheURL),
               let c = try? JSONDecoder().decode(ScanCache.self, from: data),
@@ -70,7 +86,20 @@ final class Scanner: @unchecked Sendable {
         if savedHistory == nil {
             for s in cache.samples { history.add(s) }
             history.updatedAt = Date().timeIntervalSince1970
+            history.coveredFrom = history.updatedAt - lookback
         }
+    }
+
+    var needsBackfill: Bool { !history.backfilled && history.coveredFrom > 0 }
+
+    /// One-time import of the `History.keepDays` before live scanning began, so 7D/30D aren't
+    /// empty on first launch. Only daily summaries are kept; the logs aren't read again.
+    func backfill() {
+        guard needsBackfill else { return }
+        let older = Scanner(lookback: Double(History.keepDays) * 86400)
+        for s in older.scan() where s.end < history.coveredFrom { history.add(s) }
+        history.backfilled = true
+        saveHistory()
     }
 
     func save() {
@@ -78,6 +107,10 @@ final class Scanner: @unchecked Sendable {
         cache.samples.removeAll { $0.end < cutoff }
         cache.seen = cache.seen.filter { $0.value >= cutoff }
         if let data = try? JSONEncoder().encode(cache) { try? data.write(to: cacheURL, options: .atomic) }
+        saveHistory()
+    }
+
+    private func saveHistory() {
         history.prune()
         if let data = try? JSONEncoder().encode(history) { try? data.write(to: historyURL, options: .atomic) }
     }
@@ -86,6 +119,7 @@ final class Scanner: @unchecked Sendable {
     func scan() -> [Sample] {
         var out: [Sample] = []
         let cutoff = Date().addingTimeInterval(-lookback)
+        codexDefaultTier = readCodexDefaultTier()
         let roots: [(URL, Source)] = [
             (home.appendingPathComponent(".claude/projects"), .claude),
             (home.appendingPathComponent(".codex/sessions"), .codex),
@@ -125,10 +159,16 @@ final class Scanner: @unchecked Sendable {
                 cache.files[key] = st
             }
         }
+        // Sub-agent responses whose parent's tier wasn't known yet when they were read.
+        for i in out.indices where out[i].tier?.hasPrefix(Scanner.parentMarker) == true {
+            let parent = String(out[i].tier!.dropFirst(Scanner.parentMarker.count))
+            out[i].tier = Scanner.normalizeTier(cache.threadTiers[parent] ?? codexDefaultTier)
+        }
         scanAntigravity(cutoff: cutoff, &out)
         cache.samples.append(contentsOf: out)
         for s in out where !freshScan || s.end > history.updatedAt { history.add(s) }
         history.updatedAt = Date().timeIntervalSince1970
+        if history.coveredFrom == 0 { history.coveredFrom = history.updatedAt - lookback }
         freshScan = false
         return out
     }
@@ -142,16 +182,30 @@ final class Scanner: @unchecked Sendable {
         case "turn_context":
             guard let obj = json(line), let p = obj["payload"] as? [String: Any] else { return }
             if let m = p["model"] as? String { st.model = m }
+        case "session_meta":
+            guard let obj = json(line), let p = obj["payload"] as? [String: Any] else { return }
+            st.threadId = p["id"] as? String
+            st.parentThread = p["parent_thread_id"] as? String
         case "token_usage_record":
             guard let ts = timestamp(head), let obj = json(line), let p = obj["payload"] as? [String: Any],
                   let usage = p["usage"] as? [String: Any], let tokens = usage["output_tokens"] as? Int else { return }
             if let start = st.lastInput, let model = st.model {
-                add(Sample(source: .codex, model: model, end: ts, duration: ts - start, tokens: tokens),
+                add(Sample(source: .codex, model: model, end: ts, duration: ts - start, tokens: tokens,
+                           tier: codexTier(st)),
                     id: p["response_id"] as? String, &out)
             }
             st.lastInput = ts
         case "event_msg":
-            if payloadType(head) == "task_started" { st.lastInput = timestamp(head) ?? st.lastInput }
+            switch payloadType(head) {
+            case "task_started":
+                st.lastInput = timestamp(head) ?? st.lastInput
+            case "thread_settings_applied":
+                guard let obj = json(line), let p = obj["payload"] as? [String: Any],
+                      let settings = p["thread_settings"] as? [String: Any] else { return }
+                st.tier = settings["service_tier"] as? String ?? "default"
+                if let id = st.threadId { cache.threadTiers[id] = st.tier }
+            default: break
+            }
         case "response_item":
             guard let pt = payloadType(head) else { return }
             if pt.hasSuffix("_output") || (pt == "message" && head.contains("\"role\":\"user\"")) {
@@ -159,6 +213,36 @@ final class Scanner: @unchecked Sendable {
             }
         default: break
         }
+    }
+
+    /// Codex sessions log their tier only when settings are applied. Sub-agents usually
+    /// don't, and inherit the parent's; anything else falls back to config.toml.
+    private func codexTier(_ st: FileState) -> String? {
+        if let tier = st.tier { return Scanner.normalizeTier(tier) }
+        if let parent = st.parentThread {
+            if let tier = cache.threadTiers[parent] { return Scanner.normalizeTier(tier) }
+            return Scanner.parentMarker + parent   // resolved after this scan's files are read
+        }
+        return Scanner.normalizeTier(codexDefaultTier)
+    }
+
+    private static let parentMarker = "parent:"
+
+    /// "priority" is Codex's fast mode; standard tiers get no label.
+    static func normalizeTier(_ tier: String?) -> String? {
+        switch tier {
+        case nil, "default", "standard", "auto": return nil
+        case "priority", "fast": return "fast"
+        case let other?: return other
+        }
+    }
+
+    private func readCodexDefaultTier() -> String? {
+        guard let text = try? String(contentsOf: home.appendingPathComponent(".codex/config.toml"), encoding: .utf8) else { return nil }
+        for line in text.split(separator: "\n") where line.hasPrefix("service_tier") {
+            return line.split(separator: "\"").dropFirst().first.map(String.init)
+        }
+        return nil
     }
 
     private func payloadType(_ head: String) -> String? {
@@ -175,13 +259,14 @@ final class Scanner: @unchecked Sendable {
            let id = msg["id"] as? String, let model = msg["model"] as? String, model != "<synthetic>",
            let usage = msg["usage"] as? [String: Any] {
             let tokens = usage["output_tokens"] as? Int ?? 0
+            let tier = Scanner.normalizeTier(usage["speed"] as? String)
             if var p = st.pending, p.id == id {
                 p.last = max(p.last, ts); p.tokens = max(p.tokens, tokens); st.pending = p
             } else {
                 if let p = st.pending { emit(p, &out) }
                 let parentTs = (obj["parentUuid"] as? String).flatMap { st.recentTs[$0] }
                 let start = parentTs ?? st.lastNonAssistant ?? ts
-                st.pending = ClaudePending(id: id, model: model, start: start, last: ts, tokens: tokens)
+                st.pending = ClaudePending(id: id, model: model, start: start, last: ts, tokens: tokens, tier: tier)
             }
         } else if type == "user" {
             // Not the end of the pending response: tools can run (and post results) while
@@ -206,7 +291,8 @@ final class Scanner: @unchecked Sendable {
     }
 
     private func emit(_ p: ClaudePending, _ out: inout [Sample]) {
-        add(Sample(source: .claude, model: p.model, end: p.last, duration: p.last - p.start, tokens: p.tokens),
+        add(Sample(source: .claude, model: p.model, end: p.last, duration: p.last - p.start, tokens: p.tokens,
+                   tier: p.tier),
             id: p.id, &out)
     }
 
