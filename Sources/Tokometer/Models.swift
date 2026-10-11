@@ -1,7 +1,7 @@
 import Foundation
 
 enum Source: String, Codable, CaseIterable {
-    case claude, codex, antigravity, opencode
+    case claude, codex, antigravity, opencode, grok
 
     var label: String {
         switch self {
@@ -9,6 +9,7 @@ enum Source: String, Codable, CaseIterable {
         case .codex: return "Codex"
         case .antigravity: return "Antigravity"
         case .opencode: return "OpenCode"
+        case .grok: return "Grok Build"
         }
     }
 }

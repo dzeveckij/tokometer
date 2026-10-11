@@ -4,7 +4,7 @@ cask "tokometer" do
 
   url "https://github.com/dzeveckij/tokometer/releases/download/v#{version}/Tokometer-#{version}.zip"
   name "Tokometer"
-  desc "Menu bar app showing tokens per second for Claude Code, Codex, Antigravity and OpenCode"
+  desc "Menu bar app showing tokens per second for Claude Code, Codex, Antigravity, OpenCode and Grok Build"
   homepage "https://github.com/dzeveckij/tokometer"
 
   depends_on macos: :sonoma
