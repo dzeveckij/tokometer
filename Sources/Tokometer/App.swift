@@ -7,18 +7,26 @@ enum Main {
     static func main() {
         if CommandLine.arguments.contains("--dump") { dump(); return }
         if let i = CommandLine.arguments.firstIndex(of: "--snapshot"), i + 1 < CommandLine.arguments.count {
-            MainActor.assumeIsolated { snapshot(to: CommandLine.arguments[i + 1]) }
+            let dark = CommandLine.arguments.contains("--dark")
+            MainActor.assumeIsolated { snapshot(to: CommandLine.arguments[i + 1], dark: dark) }
             return
         }
         TokometerApp.main()
     }
 
-    /// `--snapshot <path>`: renders the panel to a PNG from cached data (used for the README screenshot).
-    @MainActor static func snapshot(to path: String) {
+    /// `--snapshot <path> [--dark]`: renders the panel to a PNG from cached data (README screenshots).
+    @MainActor static func snapshot(to path: String, dark: Bool) {
         let store = Store()
         store.loadCachedForSnapshot()
-        // Render through a real window so AppKit controls and scroll views draw like they do live.
-        let host = NSHostingView(rootView: PanelView().environment(store))
+        // The live panel sits on the menu's material; give the image an opaque card instead,
+        // and show the whole list rather than a scroll view cut mid-row.
+        let card = PanelView(maxListHeight: .infinity)
+            .environment(store)
+            .background(Color(nsColor: .windowBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Color.primary.opacity(0.12)))
+        // Render through a real window so AppKit controls draw like they do live.
+        let host = NSHostingView(rootView: card)
+        host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         let window = NSWindow(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
         window.contentView = host
         for _ in 0..<3 {
@@ -84,6 +92,7 @@ struct PanelView: View {
     @Environment(Store.self) private var store
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var listHeight: CGFloat = 0
+    var maxListHeight: CGFloat = 560
 
     var body: some View {
         @Bindable var store = store
@@ -103,12 +112,12 @@ struct PanelView: View {
                     .foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 60)
             }
 
-            // Grow with content, scroll once it would get taller than ~560pt.
+            // Grow with content, scroll once it would get taller than maxListHeight.
             ScrollView {
                 modelList(stats)
                     .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listHeight = $0 }
             }
-            .frame(height: min(listHeight, 560))
+            .frame(height: min(listHeight, maxListHeight))
 
             Divider()
             HStack {

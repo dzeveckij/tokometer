@@ -2,7 +2,12 @@
 
 A tiny macOS menu bar app that shows how fast your coding agents are generating, in **tokens per second**, per model, for **Claude Code**, **Codex** and **Antigravity**.
 
-<img src="docs/screenshot.png" width="400" alt="Tokometer panel showing tokens/second per model">
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png">
+    <img src="docs/screenshot-light.png" width="400" alt="Tokometer panel showing tokens/second per model">
+  </picture>
+</p>
 
 No API keys, no proxies, no network access. Tokometer only reads the session logs these tools already write to your home directory.
 
@@ -18,7 +23,7 @@ No API keys, no proxies, no network access. Tokometer only reads the session log
 
 Requires macOS 14 or later.
 
-**From a release:** download `Tokometer.zip` from [Releases](https://github.com/dzeveckij/tokometer/releases), unzip, and move `Tokometer.app` to Applications. The app is not notarized, so on first launch right-click it → **Open**, or run:
+**From a release:** download `Tokometer-<version>.zip` from [Releases](https://github.com/dzeveckij/tokometer/releases), unzip, and move `Tokometer.app` to Applications. The app is not notarized, so on first launch right-click it → **Open**, or run:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Tokometer.app
@@ -58,7 +63,13 @@ Log formats are undocumented and change between tool versions. If a tool stops s
 ```bash
 swift build                                  # debug build
 .build/debug/Tokometer --dump                # scan from scratch and print per-model stats
-.build/debug/Tokometer --snapshot out.png    # render the panel to a PNG (used for the screenshot)
+.build/debug/Tokometer --snapshot out.png    # render the panel to a PNG (add --dark for dark mode)
+```
+
+To publish a release (builds locally, tags, pushes, and uploads the zip with `gh`):
+
+```bash
+./release.sh 0.1.0
 ```
 
 State lives in `~/Library/Application Support/Tokometer/cache.json` and can be deleted at any time.
