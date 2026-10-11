@@ -42,21 +42,35 @@ struct ScanCache: Codable {
 final class Scanner: @unchecked Sendable {
     let home = FileManager.default.homeDirectoryForCurrentUser
     var cache = ScanCache()
+    var history = History()
+    /// True until the first scan after starting without a usable cache.
+    private var freshScan = true
     /// History kept and shown; log files untouched for longer are skipped entirely.
     let lookback: TimeInterval = 86400
 
-    private var cacheURL: URL {
+    private var supportDir: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Tokometer", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("cache.json")
+        return dir
     }
+    private var cacheURL: URL { supportDir.appendingPathComponent("cache.json") }
+    /// Separate from the cache so a cache rebuild never loses history.
+    private var historyURL: URL { supportDir.appendingPathComponent("history.json") }
 
     func load() {
+        let savedHistory = (try? Data(contentsOf: historyURL)).flatMap { try? JSONDecoder().decode(History.self, from: $0) }
+        if let savedHistory { history = savedHistory }
         guard let data = try? Data(contentsOf: cacheURL),
               let c = try? JSONDecoder().decode(ScanCache.self, from: data),
               c.version == ScanCache.currentVersion else { return }
         cache = c
+        freshScan = false
+        // First run with history: start it from the responses already in the cache.
+        if savedHistory == nil {
+            for s in cache.samples { history.add(s) }
+            history.updatedAt = Date().timeIntervalSince1970
+        }
     }
 
     func save() {
@@ -64,6 +78,8 @@ final class Scanner: @unchecked Sendable {
         cache.samples.removeAll { $0.end < cutoff }
         cache.seen = cache.seen.filter { $0.value >= cutoff }
         if let data = try? JSONEncoder().encode(cache) { try? data.write(to: cacheURL, options: .atomic) }
+        history.prune()
+        if let data = try? JSONEncoder().encode(history) { try? data.write(to: historyURL, options: .atomic) }
     }
 
     /// Scans all known log roots, returns newly found samples.
@@ -111,6 +127,9 @@ final class Scanner: @unchecked Sendable {
         }
         scanAntigravity(cutoff: cutoff, &out)
         cache.samples.append(contentsOf: out)
+        for s in out where !freshScan || s.end > history.updatedAt { history.add(s) }
+        history.updatedAt = Date().timeIntervalSince1970
+        freshScan = false
         return out
     }
 

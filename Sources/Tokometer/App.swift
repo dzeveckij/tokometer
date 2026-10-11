@@ -11,17 +11,19 @@ enum Main {
             let dark = args.contains("--dark")
             let collapsed = args.firstIndex(of: "--collapse").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
                 .map { Set($0.split(separator: ",").compactMap { Source(rawValue: String($0)) }) } ?? []
-            MainActor.assumeIsolated { snapshot(to: args[i + 1], dark: dark, collapsed: collapsed) }
+            let window = args.firstIndex(of: "--window").flatMap { $0 + 1 < args.count ? StatsWindow(rawValue: args[$0 + 1]) : nil }
+            MainActor.assumeIsolated { snapshot(to: args[i + 1], dark: dark, collapsed: collapsed, window: window) }
             return
         }
         TokometerApp.main()
     }
 
-    /// `--snapshot <path> [--dark] [--collapse codex,antigravity]`: renders the panel to a PNG
+    /// `--snapshot <path> [--dark] [--collapse codex,antigravity] [--window 7D]`: renders the panel to a PNG
     /// from cached data (README screenshots). Doesn't touch the app's saved settings.
-    @MainActor static func snapshot(to path: String, dark: Bool, collapsed: Set<Source>) {
+    @MainActor static func snapshot(to path: String, dark: Bool, collapsed: Set<Source>, window: StatsWindow?) {
         let store = Store()
         store.loadCachedForSnapshot(collapsed: collapsed)
+        if let window { store.window = window }
         // The live panel sits on the menu's material; give the image an opaque card instead,
         // and show the whole list rather than a scroll view cut mid-row.
         let card = PanelView(maxListHeight: .infinity)
@@ -84,7 +86,9 @@ struct BarLabel: View {
 
     var body: some View {
         if let b = store.barStats {
-            Text((store.showModelInBar ? "\(b.name) " : "") + "\(Int(b.tps.rounded())) t/s")
+            // Arrow when clearly off the model's usual pace (menu bar text can't be colored).
+            let arrow = b.change.map { $0 <= -0.15 ? " ↓" : $0 >= 0.15 ? " ↑" : "" } ?? ""
+            Text((store.showModelInBar ? "\(b.name) " : "") + "\(Int(b.tps.rounded())) t/s" + arrow)
                 .monospacedDigit()
         } else {
             Image(systemName: "gauge.with.dots.needle.33percent")
@@ -109,7 +113,7 @@ struct PanelView: View {
                 Picker("", selection: $store.window) {
                     ForEach(StatsWindow.allCases) { Text($0.rawValue).tag($0) }
                 }
-                .pickerStyle(.segmented).labelsHidden().frame(width: 140)
+                .pickerStyle(.segmented).labelsHidden().frame(width: 220)
             }
 
             if stats.isEmpty {
@@ -244,14 +248,15 @@ struct ModelRow: View {
             VStack(alignment: .trailing, spacing: 0) {
                 Text(fmt(stats.recent)).font(.title3.weight(.semibold)).monospacedDigit()
                 Text("t/s").font(.caption2).foregroundStyle(.secondary)
+                if let change = stats.change { ChangeBadge(change: change) }
             }
-            .frame(width: 52, alignment: .trailing)
+            .frame(width: 56, alignment: .trailing)
         }
         .padding(.vertical, 6).padding(.horizontal, 8)
         .background(RoundedRectangle(cornerRadius: 8).fill(pinned ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.04)))
         .contentShape(Rectangle())
         .onTapGesture { store.pinned = pinned ? nil : stats.key }
-        .help("Big number: median of last 5 responses. Click to pin to the menu bar.")
+        .help("Big number: median of last 5 responses; % is versus this model's usual (7-day median). Click to pin to the menu bar.")
     }
 
     private func fmt(_ v: Double) -> String { v >= 100 ? String(Int(v.rounded())) : String(format: "%.1f", v) }
@@ -267,16 +272,37 @@ struct ModelRow: View {
     }
 }
 
-struct Sparkline: View {
-    let points: [Sample]
+/// Recent speed versus the model's usual: "↓18%" in orange/red when slower, green when faster.
+struct ChangeBadge: View {
+    let change: Double
 
     var body: some View {
-        Chart(Array(points.enumerated()), id: \.offset) { i, s in
-            LineMark(x: .value("i", i), y: .value("tps", s.tps))
+        let pct = Int((change * 100).rounded())
+        Text(abs(pct) < 5 ? "usual" : "\(pct < 0 ? "↓" : "↑")\(abs(pct))%")
+            .font(.caption2.weight(.medium)).monospacedDigit()
+            .foregroundStyle(color)
+    }
+
+    private var color: Color {
+        switch change {
+        case ..<(-0.25): return .red
+        case ..<(-0.10): return .orange
+        case 0.10...: return .green
+        default: return .secondary
+        }
+    }
+}
+
+struct Sparkline: View {
+    let points: [Double]
+
+    var body: some View {
+        Chart(Array(points.enumerated()), id: \.offset) { i, v in
+            LineMark(x: .value("i", i), y: .value("tps", v))
                 .interpolationMethod(.monotone)
                 .lineStyle(StrokeStyle(lineWidth: 1.5))
         }
         .chartXAxis(.hidden).chartYAxis(.hidden)
-        .chartYScale(domain: 0...(max(points.map(\.tps).max() ?? 1, 1)))
+        .chartYScale(domain: 0...max(points.max() ?? 1, 1))
     }
 }

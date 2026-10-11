@@ -16,6 +16,12 @@ ZIP=build/Tokometer-$VERSION.zip
 rm -f "$ZIP"
 ditto -c -k --norsrc --noextattr --keepParent build/Tokometer.app "$ZIP"
 
+# Point the Homebrew cask at this release.
+SHA=$(shasum -a 256 "$ZIP" | cut -d' ' -f1)
+sed -i '' -e "s/^  version \".*\"/  version \"$VERSION\"/" -e "s/^  sha256 \".*\"/  sha256 \"$SHA\"/" Casks/tokometer.rb
+git add Casks/tokometer.rb
+git commit -q -m "Cask: Tokometer $VERSION"
+
 git tag -a "$TAG" -m "Tokometer $VERSION"
 git push origin HEAD "$TAG"
 gh release create "$TAG" "$ZIP" --title "Tokometer $VERSION" --generate-notes
