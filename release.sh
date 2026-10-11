@@ -14,7 +14,7 @@ git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && { echo "Tag $TAG alread
 VERSION=$VERSION ./build.sh
 ZIP=build/Tokometer-$VERSION.zip
 rm -f "$ZIP"
-ditto -c -k --keepParent build/Tokometer.app "$ZIP"
+ditto -c -k --norsrc --noextattr --keepParent build/Tokometer.app "$ZIP"
 
 git tag -a "$TAG" -m "Tokometer $VERSION"
 git push origin HEAD "$TAG"
