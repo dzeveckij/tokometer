@@ -2,7 +2,7 @@
 
 # Tokometer
 
-A tiny macOS menu bar app that shows how fast your coding agents are generating, in **tokens per second**, per model, for **Claude Code**, **Codex**, **Antigravity**, **OpenCode** and **Grok Build**.
+A tiny macOS menu bar app that shows how fast your coding agents are generating, in **tokens per second**, per model, for **Claude Code**, **Codex**, **Antigravity**, **OpenCode**, **Grok Build**, **pi** and **OMP** (oh-my-pi).
 
 <p align="center">
   <picture>
@@ -58,6 +58,7 @@ Speed is **output tokens ÷ wall-clock time** of a single model response, measur
 | Codex | `~/.codex/sessions/`, `~/.codex/archived_sessions/` | `token_usage_record.usage.output_tokens` | last input (task start, tool output, user message) → usage record |
 | Antigravity | `~/.gemini/antigravity{,-cli,-ide}/conversations/*.db` | step metadata usage | step created → step completed |
 | Grok Build | `~/.grok/sessions/*/*/updates.jsonl` (or `$GROK_HOME`) | `turn_completed` usage `outputTokens` (includes reasoning), per model | `apiDurationMs`: time spent in model calls, tools excluded |
+| pi / OMP | `~/.pi/agent/sessions/` (or `$PI_CODING_AGENT_DIR`) and `~/.omp/agent/sessions/`, `*.jsonl` | assistant message `usage.output` (includes reasoning) | message start → `completedAt` (OMP) or the entry's own timestamp (pi), both before tools run |
 | OpenCode | `~/.local/share/opencode/opencode.db` (or `$XDG_DATA_HOME/opencode`; older versions' `storage/message/*.json` too) | assistant message `tokens.output` + `tokens.reasoning` | message created → stream finished (tool execution excluded) |
 
 Models are labeled by what actually ran:
@@ -65,6 +66,7 @@ Models are labeled by what actually ran:
 - **Codex:** fast mode (`service_tier = "priority"`) is shown separately as "· Fast". Sub-agent sessions inherit their parent session's tier; sessions that never log one use `service_tier` from `~/.codex/config.toml`.
 - **Claude Code:** `usage.speed` marks fast mode the same way; the model is the one the API reports for each response.
 - **Grok Build:** labeled by the backend in each turn's usage (e.g. `grok-4.7-build`), with the model you picked (e.g. `grok-4.7`) shown as "requested". Grok logs usage per turn rather than per model call, so a Grok sample is a whole turn: its tokens over its total API time.
+- **pi / OMP:** OMP is a fork of pi with the same session format, so one parser reads both into separate sections. Models are labeled `provider/model` (e.g. `zai/gemini-4-argon`), since both tools reach the same model through many providers. Failed calls (rate limits, errors) are skipped.
 - **OpenCode:** models from OpenCode's own provider are shown by name; other providers keep a prefix (e.g. `openrouter/claude-sonnet-4-5`), since the same model can run at very different speeds through different providers. A non-default variant is shown like a tier (e.g. "· High").
 - **Antigravity:** the model you pick is often served by a different backend (e.g. `gemini-3.8-flash-high` by `gemini-3.8-flash-exp-a` or `gemini-3.8-flash-n`, which differ noticeably in speed). Rows show the backend that answered, with "requested …" underneath.
 
@@ -105,6 +107,7 @@ Source layout:
 - `Antigravity.swift`: SQLite + minimal protobuf reader for Antigravity
 - `OpenCode.swift`: OpenCode SQLite (current and older layouts) and JSON-file reader
 - `Grok.swift`: Grok Build session log reader
+- `Pi.swift`: pi and OMP session log reader
 - `History.swift`: daily per-model summaries for 7 D / 30 D and the usual-speed baseline
 - `Store.swift`: samples, stats, settings
 - `App.swift`: menu bar UI

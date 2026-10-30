@@ -64,6 +64,9 @@ final class Scanner: @unchecked Sendable {
     var openCodeDir: URL?
     /// Grok Build home; defaults to $GROK_HOME or ~/.grok.
     var grokHome: URL?
+    /// pi / OMP agent dirs; default $PI_CODING_AGENT_DIR or ~/.pi/agent, and ~/.omp/agent.
+    var piDir: URL?
+    var ompDir: URL?
 
     init(lookback: TimeInterval = 86400) {
         self.lookback = lookback
@@ -159,7 +162,7 @@ final class Scanner: @unchecked Sendable {
                     switch source {
                     case .codex: handleCodex(line, &st, &out)
                     case .claude: handleClaude(line, &st, &out)
-                    case .antigravity, .opencode, .grok: break
+                    case .antigravity, .opencode, .grok, .pi, .omp: break
                     }
                 }
                 flushIdleClaude(&st, &out)
@@ -174,6 +177,7 @@ final class Scanner: @unchecked Sendable {
         scanAntigravity(cutoff: cutoff, &out)
         scanOpenCode(cutoff: cutoff, &out)
         scanGrok(cutoff: cutoff, &out)
+        scanPiAgents(cutoff: cutoff, &out)
         cache.samples.append(contentsOf: out)
         for s in out where !freshScan || s.end > history.updatedAt { history.add(s) }
         history.updatedAt = Date().timeIntervalSince1970
