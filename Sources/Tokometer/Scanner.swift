@@ -67,6 +67,8 @@ final class Scanner: @unchecked Sendable {
     /// pi / OMP agent dirs; default $PI_CODING_AGENT_DIR or ~/.pi/agent, and ~/.omp/agent.
     var piDir: URL?
     var ompDir: URL?
+    /// Antigravity roots; default ~/.gemini and ~/.t3/userdata/providers/antigravity.
+    var antigravityRoots: (gemini: URL, t3: URL)?
 
     init(lookback: TimeInterval = 86400) {
         self.lookback = lookback
@@ -92,6 +94,9 @@ final class Scanner: @unchecked Sendable {
               c.version == ScanCache.currentVersion else { return }
         cache = c
         freshScan = false
+        if history.backfilled, history.newAntigravityBackfilled != true, history.newAntigravityFrom == nil {
+            history.newAntigravityFrom = Date().timeIntervalSince1970 - lookback
+        }
         // First run with history: start it from the responses already in the cache.
         if savedHistory == nil {
             for s in cache.samples { history.add(s) }
@@ -100,15 +105,29 @@ final class Scanner: @unchecked Sendable {
         }
     }
 
-    var needsBackfill: Bool { !history.backfilled && history.coveredFrom > 0 }
+    var needsBackfill: Bool {
+        history.coveredFrom > 0 && (!history.backfilled || history.newAntigravityBackfilled != true)
+    }
 
     /// One-time import of the `History.keepDays` before live scanning began, so 7D/30D aren't
     /// empty on first launch. Only daily summaries are kept; the logs aren't read again.
     func backfill() {
         guard needsBackfill else { return }
         let older = Scanner(lookback: Double(History.keepDays) * 86400)
-        for s in older.scan() where s.end < history.coveredFrom { history.add(s) }
+        older.antigravityRoots = antigravityRoots
+        if !history.backfilled {
+            for s in older.scan() where s.end < history.coveredFrom { history.add(s) }
+        } else {
+            // History from before these dirs were read: import only them, so nothing already
+            // counted is counted twice (and nothing whose logs are gone is lost).
+            var out: [Sample] = []
+            older.scanAntigravity(cutoff: Date().addingTimeInterval(-older.lookback),
+                                  dirs: newAntigravityDirs(), &out)
+            let from = history.newAntigravityFrom ?? history.coveredFrom
+            for s in out where s.end < from { history.add(s) }
+        }
         history.backfilled = true
+        history.newAntigravityBackfilled = true
         saveHistory()
     }
 

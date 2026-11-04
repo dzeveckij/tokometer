@@ -37,6 +37,11 @@ struct History: Codable {
     var coveredFrom: Double = 0
     /// Whether the time before `coveredFrom` has been filled in from older logs.
     var backfilled = false
+    /// Antigravity Insiders and T3 Code's Antigravity were added after the backfill above, so their
+    /// older responses are imported once on their own; live scanning has counted them since this.
+    /// nil in history that never had them backfilled.
+    var newAntigravityFrom: Double?
+    var newAntigravityBackfilled: Bool?
 
     /// "yyyy-MM-dd" -> model key -> stats
     var days: [String: [String: DayStat]] = [:]

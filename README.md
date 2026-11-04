@@ -56,7 +56,7 @@ Speed is **output tokens ÷ wall-clock time** of a single model response, measur
 |---|---|---|---|
 | Claude Code | `~/.claude/projects/**/*.jsonl` | `message.usage.output_tokens` | parent prompt/tool result → last content block of the message |
 | Codex | `~/.codex/sessions/`, `~/.codex/archived_sessions/` | `token_usage_record.usage.output_tokens` | last input (task start, tool output, user message) → usage record |
-| Antigravity | `~/.gemini/antigravity{,-cli,-ide}/conversations/*.db` | step metadata usage | step created → step completed |
+| Antigravity | `~/.gemini/antigravity*/conversations/*.db` (app, CLI, IDE, Insiders) and `~/.t3/userdata/providers/antigravity/*/*/conversations/*.db` (run from T3 Code) | step metadata usage | step created → step completed |
 | Grok Build | `~/.grok/sessions/*/*/updates.jsonl` (or `$GROK_HOME`) | `turn_completed` usage `outputTokens` (includes reasoning), per model | `apiDurationMs`: time spent in model calls, tools excluded |
 | pi / OMP | `~/.pi/agent/sessions/` (or `$PI_CODING_AGENT_DIR`) and `~/.omp/agent/sessions/`, `*.jsonl` | assistant message `usage.output` (includes reasoning) | message start → `completedAt` (OMP) or the entry's own timestamp (pi), both before tools run |
 | OpenCode | `~/.local/share/opencode/opencode.db` (or `$XDG_DATA_HOME/opencode`; older versions' `storage/message/*.json` too) | assistant message `tokens.output` + `tokens.reasoning` | message created → stream finished (tool execution excluded) |

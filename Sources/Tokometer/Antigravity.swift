@@ -1,21 +1,24 @@
 import Foundation
 import SQLite3
 
-/// Antigravity (app, CLI, IDE) keeps each conversation in a SQLite DB under ~/.gemini/<variant>/conversations.
+/// Antigravity (app, CLI, IDE, Insiders) keeps each conversation in a SQLite DB under
+/// ~/.gemini/<variant>/conversations (T3 Code: ~/.t3/userdata/providers/antigravity/<id>/<variant>/conversations).
 /// Model responses are `steps` rows with step_type 15; their `metadata` protobuf holds:
 ///   .1 created timestamp, .7 completed timestamp,
-///   .9 usage { .1 requested model enum, .3 output tokens, .11 response id }.
+///   .9 usage { .1 requested model enum, .3 output tokens, .11 response id },
+///   .20 { .3 generation index = gen_metadata idx }, .24 { .8 requested model name }.
 /// `gen_metadata` rows, one per generation, hold
 ///   .1 { .4 { .11 response id }, .19 backend model that actually ran }
 ///   .3 { .1 model enum, .28 requested model name }.
+/// Some fields are optional: T3 Code's Antigravity logs no enum, response id or .3 config, so
+/// responses are matched to their generation by index and the requested name comes from .24.
 /// The requested model is often served by a different backend (e.g. "gemini-3.8-flash-high"
 /// by "gemini-3.8-flash" or "gemini-3.8-flash-n", which differ in speed), so samples use the
 /// backend model and keep the requested one alongside.
 extension Scanner {
-    func scanAntigravity(cutoff: Date, _ out: inout [Sample]) {
+    func scanAntigravity(cutoff: Date, dirs: [URL]? = nil, _ out: inout [Sample]) {
         let fm = FileManager.default
-        for variant in ["antigravity", "antigravity-cli", "antigravity-ide"] {
-            let dir = home.appendingPathComponent(".gemini/\(variant)/conversations")
+        for dir in dirs ?? antigravityConversationDirs() {
             guard let names = try? fm.contentsOfDirectory(atPath: dir.path) else { continue }
             for name in names where name.hasSuffix(".db") {
                 let path = dir.appendingPathComponent(name).path
@@ -32,6 +35,32 @@ extension Scanner {
         }
     }
 
+    /// Every `conversations` dir Antigravity writes to:
+    ///   ~/.gemini/antigravity*/conversations (app, -cli, -ide, -insiders, …), and
+    ///   ~/.t3/userdata/providers/antigravity/<id>/<variant>/conversations, where T3 Code runs it
+    ///   with its own data dir.
+    func antigravityConversationDirs() -> [URL] {
+        let fm = FileManager.default
+        func subdirs(_ url: URL) -> [URL] {
+            ((try? fm.contentsOfDirectory(atPath: url.path)) ?? []).sorted().map { url.appendingPathComponent($0) }
+        }
+        let gemini = antigravityRoots?.gemini ?? home.appendingPathComponent(".gemini")
+        let t3 = antigravityRoots?.t3 ?? home.appendingPathComponent(".t3/userdata/providers/antigravity")
+        let variants = subdirs(gemini).filter { $0.lastPathComponent.hasPrefix("antigravity") }
+            + subdirs(t3).flatMap(subdirs)
+        return variants.map { $0.appendingPathComponent("conversations") }
+            .filter { var isDir: ObjCBool = false; return fm.fileExists(atPath: $0.path, isDirectory: &isDir) && isDir.boolValue }
+    }
+
+    /// Dirs added after the original app/CLI/IDE ones (see `History.newAntigravityFrom`).
+    func newAntigravityDirs() -> [URL] {
+        let gemini = antigravityRoots?.gemini ?? home.appendingPathComponent(".gemini")
+        let original = ["antigravity", "antigravity-cli", "antigravity-ide"].map {
+            gemini.appendingPathComponent($0).appendingPathComponent("conversations").standardizedFileURL.path
+        }
+        return antigravityConversationDirs().filter { !original.contains($0.standardizedFileURL.path) }
+    }
+
     /// Returns false if the DB couldn't be read (retried next scan).
     private func readAntigravity(path: String, _ st: inout FileState, _ out: inout [Sample]) -> Bool {
         var db: OpaquePointer?
@@ -41,12 +70,13 @@ extension Scanner {
         sqlite3_busy_timeout(db, 1000)
 
         var served: [String: String] = [:]   // response id -> backend model
+        var servedAt: [Int64: String] = [:]  // generation index -> backend model
         var names: [Int: [String: Int]] = [:]
-        let namesOK = forEachRow(db, "SELECT data FROM gen_metadata") { stmt in
-            let gen = PB(blob(stmt, 0))
-            if let run = gen.bytes(1).map(PB.init), let model = run.string(19),
-               let rid = run.bytes(4).map(PB.init)?.string(11) {
-                served[rid] = model
+        let namesOK = forEachRow(db, "SELECT idx, data FROM gen_metadata") { stmt in
+            let gen = PB(blob(stmt, 1))
+            if let run = gen.bytes(1).map(PB.init), let model = run.string(19) {
+                servedAt[sqlite3_column_int64(stmt, 0)] = model
+                if let rid = run.bytes(4).map(PB.init)?.string(11) { served[rid] = model }
             }
             if let cfg = gen.bytes(3).map(PB.init), let id = cfg.varint(1), let name = cfg.string(28) {
                 names[Int(id), default: [:]][name, default: 0] += 1
@@ -68,8 +98,10 @@ extension Scanner {
             guard let start = meta.timestamp(1), let usage = meta.bytes(9).map(PB.init),
                   let tokens = usage.varint(3) else { return true }
             let id = Int(usage.varint(1) ?? 0)
-            let requested = cache.agyModels[id]   // nil when the logs never name this enum
-            let actual = usage.string(11).flatMap { served[$0] }
+            // nil when the logs never name this model
+            let requested = meta.bytes(24).map(PB.init)?.string(8) ?? cache.agyModels[id]
+            let generation = meta.bytes(20).map { Int64(PB($0).varint(3) ?? 0) }
+            let actual = usage.string(11).flatMap { served[$0] } ?? generation.flatMap { servedAt[$0] }
             add(Sample(source: .antigravity, model: actual ?? requested ?? "model-\(id)", end: end,
                        duration: end - start, tokens: Int(tokens),
                        requested: actual != nil && actual != requested ? requested : nil), &out)
