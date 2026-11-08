@@ -67,6 +67,8 @@ final class Scanner: @unchecked Sendable {
     /// pi / OMP agent dirs; default $PI_CODING_AGENT_DIR or ~/.pi/agent, and ~/.omp/agent.
     var piDir: URL?
     var ompDir: URL?
+    /// GitHub Copilot CLI home; defaults to $COPILOT_HOME or ~/.copilot.
+    var copilotHome: URL?
     /// Antigravity roots; default ~/.gemini and ~/.t3/userdata/providers/antigravity.
     var antigravityRoots: (gemini: URL, t3: URL)?
 
@@ -97,6 +99,9 @@ final class Scanner: @unchecked Sendable {
         if history.backfilled, history.newAntigravityBackfilled != true, history.newAntigravityFrom == nil {
             history.newAntigravityFrom = Date().timeIntervalSince1970 - lookback
         }
+        if history.backfilled, history.copilotBackfilled != true, history.copilotFrom == nil {
+            history.copilotFrom = Date().timeIntervalSince1970 - lookback
+        }
         // First run with history: start it from the responses already in the cache.
         if savedHistory == nil {
             for s in cache.samples { history.add(s) }
@@ -106,7 +111,8 @@ final class Scanner: @unchecked Sendable {
     }
 
     var needsBackfill: Bool {
-        history.coveredFrom > 0 && (!history.backfilled || history.newAntigravityBackfilled != true)
+        history.coveredFrom > 0
+            && (!history.backfilled || history.newAntigravityBackfilled != true || history.copilotBackfilled != true)
     }
 
     /// One-time import of the `History.keepDays` before live scanning began, so 7D/30D aren't
@@ -115,19 +121,29 @@ final class Scanner: @unchecked Sendable {
         guard needsBackfill else { return }
         let older = Scanner(lookback: Double(History.keepDays) * 86400)
         older.antigravityRoots = antigravityRoots
+        older.copilotHome = copilotHome
         if !history.backfilled {
             for s in older.scan() where s.end < history.coveredFrom { history.add(s) }
         } else {
-            // History from before these dirs were read: import only them, so nothing already
+            // History from before these sources were read: import only them, so nothing already
             // counted is counted twice (and nothing whose logs are gone is lost).
-            var out: [Sample] = []
-            older.scanAntigravity(cutoff: Date().addingTimeInterval(-older.lookback),
-                                  dirs: newAntigravityDirs(), &out)
-            let from = history.newAntigravityFrom ?? history.coveredFrom
-            for s in out where s.end < from { history.add(s) }
+            let cutoff = Date().addingTimeInterval(-older.lookback)
+            if history.newAntigravityBackfilled != true {
+                var out: [Sample] = []
+                older.scanAntigravity(cutoff: cutoff, dirs: newAntigravityDirs(), &out)
+                let from = history.newAntigravityFrom ?? history.coveredFrom
+                for s in out where s.end < from { history.add(s) }
+            }
+            if history.copilotBackfilled != true {
+                var out: [Sample] = []
+                older.scanCopilot(cutoff: cutoff, &out)
+                let from = history.copilotFrom ?? history.coveredFrom
+                for s in out where s.end < from { history.add(s) }
+            }
         }
         history.backfilled = true
         history.newAntigravityBackfilled = true
+        history.copilotBackfilled = true
         saveHistory()
     }
 
@@ -181,7 +197,7 @@ final class Scanner: @unchecked Sendable {
                     switch source {
                     case .codex: handleCodex(line, &st, &out)
                     case .claude: handleClaude(line, &st, &out)
-                    case .antigravity, .opencode, .grok, .pi, .omp: break
+                    case .copilot, .antigravity, .opencode, .grok, .pi, .omp: break
                     }
                 }
                 flushIdleClaude(&st, &out)
@@ -197,6 +213,7 @@ final class Scanner: @unchecked Sendable {
         scanOpenCode(cutoff: cutoff, &out)
         scanGrok(cutoff: cutoff, &out)
         scanPiAgents(cutoff: cutoff, &out)
+        scanCopilot(cutoff: cutoff, &out)
         cache.samples.append(contentsOf: out)
         for s in out where !freshScan || s.end > history.updatedAt { history.add(s) }
         history.updatedAt = Date().timeIntervalSince1970

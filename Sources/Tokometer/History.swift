@@ -42,6 +42,9 @@ struct History: Codable {
     /// nil in history that never had them backfilled.
     var newAntigravityFrom: Double?
     var newAntigravityBackfilled: Bool?
+    /// The same for GitHub Copilot, added later still.
+    var copilotFrom: Double?
+    var copilotBackfilled: Bool?
 
     /// "yyyy-MM-dd" -> model key -> stats
     var days: [String: [String: DayStat]] = [:]
